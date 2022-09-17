@@ -1771,7 +1771,7 @@ checksum = "64fba5a42bd76a17cad4bfa00de168ee1cbfa06a5e8ce992ae880218c05641a9"
 dependencies = [
  "byteorder",
  "dynasm",
- "memmap2 0.5.0",
+ "memmap2 0.5.7",
 ]
 
 [[package]]
@@ -4345,9 +4345,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.5.0"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4647a11b578fead29cdbb34d4adef8dd3dc35b876c9c6d5240d83f205abfe96e"
+checksum = "95af15f345b17af2efc8ead6080fb8bc376f8cec1b35277b935637595fe77498"
 dependencies = [
  "libc",
 ]
@@ -7871,7 +7871,7 @@ name = "sc-chain-spec"
 version = "4.0.0-dev"
 dependencies = [
  "impl-trait-for-tuples",
- "memmap2 0.5.0",
+ "memmap2 0.5.7",
  "parity-scale-codec",
  "sc-chain-spec-derive",
  "sc-network-common",
@@ -11708,7 +11708,7 @@ dependencies = [
  "enumset",
  "lazy_static",
  "loupe",
- "memmap2 0.5.0",
+ "memmap2 0.5.7",
  "more-asserts",
  "rustc-demangle",
  "serde",
