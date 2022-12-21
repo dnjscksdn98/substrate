@@ -29,7 +29,7 @@
 //! far in the future they are.
 //!
 //! NOTE: Aura itself is designed to be generic over the crypto used.
-#![forbid(missing_docs, unsafe_code)]
+#![forbid(unsafe_code)]
 use std::{fmt::Debug, hash::Hash, marker::PhantomData, pin::Pin, sync::Arc};
 
 use futures::prelude::*;
@@ -59,6 +59,8 @@ use sp_runtime::{
 };
 
 mod import_queue;
+mod worker;
+pub mod communication;
 
 pub use import_queue::{
 	build_verifier, import_queue, AuraVerifier, BuildVerifierParams, CheckForEquivocation,
