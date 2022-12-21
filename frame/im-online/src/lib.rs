@@ -104,7 +104,7 @@ use sp_staking::{
 	offence::{Kind, Offence, ReportOffence},
 	SessionIndex,
 };
-use sp_std::prelude::*;
+use sp_std::{marker::PhantomData, prelude::*};
 pub use weights::WeightInfo;
 
 pub mod sr25519 {
@@ -355,7 +355,7 @@ pub mod pallet {
 		type ReportUnresponsiveness: ReportOffence<
 			Self::AccountId,
 			IdentificationTuple<Self>,
-			UnresponsivenessOffence<IdentificationTuple<Self>>,
+			UnresponsivenessOffence<IdentificationTuple<Self>, Self>,
 		>;
 
 		/// A configuration for base priority of unsigned transactions.
@@ -364,6 +364,9 @@ pub mod pallet {
 		/// multiple pallets send unsigned transactions.
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
+
+		#[pallet::constant]
+		type DefaultSlashFraction: Get<Perbill>;
 
 		/// Weight information for extrinsics in this pallet.
 		type WeightInfo: WeightInfo;
@@ -378,6 +381,8 @@ pub mod pallet {
 		AllGood,
 		/// At the end of the session, at least one validator was found to be offline.
 		SomeOffline { offline: Vec<IdentificationTuple<T>> },
+		/// Set the slash fraction for unresponsiveness.
+		SlashFractionSet { old: Perbill, new: Perbill },
 	}
 
 	#[pallet::error]
@@ -386,6 +391,8 @@ pub mod pallet {
 		InvalidKey,
 		/// Duplicated heartbeat.
 		DuplicatedHeartbeat,
+		/// Cannot write same value.
+		NoWritingSameValue,
 	}
 
 	/// The block number after which it's ok to send heartbeats in the current
@@ -442,6 +449,10 @@ pub mod pallet {
 		ValueQuery,
 	>;
 
+	#[pallet::storage]
+	#[pallet::getter(fn slash_fraction)]
+	pub type SlashFraction<T: Config> = StorageValue<_, Perbill, ValueQuery>;
+
 	#[pallet::genesis_config]
 	pub struct GenesisConfig<T: Config> {
 		pub keys: Vec<T::AuthorityId>,
@@ -458,6 +469,7 @@ pub mod pallet {
 	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
 		fn build(&self) {
 			Pallet::<T>::initialize_keys(&self.keys);
+			SlashFraction::<T>::put(T::DefaultSlashFraction::get());
 		}
 	}
 
@@ -513,6 +525,19 @@ pub mod pallet {
 				Err(Error::<T>::InvalidKey.into())
 			}
 		}
+
+		#[pallet::weight(<T as Config>::WeightInfo::set_slash_fraction())]
+		pub fn set_slash_fraction(
+			origin: OriginFor<T>,
+			new: Perbill,
+		) -> DispatchResultWithPostInfo {
+			frame_system::ensure_root(origin)?;
+			let old = <SlashFraction<T>>::get();
+			ensure!(old != new, Error::<T>::NoWritingSameValue);
+			<SlashFraction<T>>::put(new);
+			Self::deposit_event(Event::SlashFractionSet { old, new });
+			Ok(().into())
+		}
 	}
 
 	#[pallet::hooks]
@@ -552,19 +577,19 @@ pub mod pallet {
 			if let Call::heartbeat { heartbeat, signature } = call {
 				if <Pallet<T>>::is_online(heartbeat.authority_index) {
 					// we already received a heartbeat for this authority
-					return InvalidTransaction::Stale.into()
+					return InvalidTransaction::Stale.into();
 				}
 
 				// check if session index from heartbeat is recent
 				let current_session = T::ValidatorSet::session_index();
 				if heartbeat.session_index != current_session {
-					return InvalidTransaction::Stale.into()
+					return InvalidTransaction::Stale.into();
 				}
 
 				// verify that the incoming (unverified) pubkey is actually an authority id
 				let keys = Keys::<T>::get();
 				if keys.len() as u32 != heartbeat.validators_len {
-					return InvalidTransaction::Custom(INVALID_VALIDATORS_LEN).into()
+					return InvalidTransaction::Custom(INVALID_VALIDATORS_LEN).into();
 				}
 				let authority_id = match keys.get(heartbeat.authority_index as usize) {
 					Some(id) => id,
@@ -577,7 +602,7 @@ pub mod pallet {
 				});
 
 				if !signature_valid {
-					return InvalidTransaction::BadProof.into()
+					return InvalidTransaction::BadProof.into();
 				}
 
 				ValidTransaction::with_tag_prefix("ImOnline")
@@ -621,7 +646,7 @@ impl<T: Config> Pallet<T> {
 		let current_validators = T::ValidatorSet::validators();
 
 		if authority_index >= current_validators.len() as u32 {
-			return false
+			return false;
 		}
 
 		let authority = &current_validators[authority_index as usize];
@@ -632,8 +657,8 @@ impl<T: Config> Pallet<T> {
 	fn is_online_aux(authority_index: AuthIndex, authority: &ValidatorId<T>) -> bool {
 		let current_session = T::ValidatorSet::session_index();
 
-		ReceivedHeartbeats::<T>::contains_key(&current_session, &authority_index) ||
-			AuthoredBlocks::<T>::get(&current_session, authority) != 0
+		ReceivedHeartbeats::<T>::contains_key(&current_session, &authority_index)
+			|| AuthoredBlocks::<T>::get(&current_session, authority) != 0
 	}
 
 	/// Returns `true` if a heartbeat has been received for the authority at `authority_index` in
@@ -683,8 +708,8 @@ impl<T: Config> Pallet<T> {
 			// haven't sent an heartbeat yet we'll send one unconditionally. the idea is to prevent
 			// all nodes from sending the heartbeats at the same block and causing a temporary (but
 			// deterministic) spike in transactions.
-			progress >= START_HEARTBEAT_FINAL_PERIOD ||
-				progress >= START_HEARTBEAT_RANDOM_PERIOD && random_choice(progress)
+			progress >= START_HEARTBEAT_FINAL_PERIOD
+				|| progress >= START_HEARTBEAT_RANDOM_PERIOD && random_choice(progress)
 		} else {
 			// otherwise we fallback to using the block number calculated at the beginning
 			// of the session that should roughly correspond to the middle of the session
@@ -693,7 +718,7 @@ impl<T: Config> Pallet<T> {
 		};
 
 		if !should_heartbeat {
-			return Err(OffchainErr::TooEarly)
+			return Err(OffchainErr::TooEarly);
 		}
 
 		let session_index = T::ValidatorSet::session_index();
@@ -735,7 +760,7 @@ impl<T: Config> Pallet<T> {
 		};
 
 		if Self::is_online(authority_index) {
-			return Err(OffchainErr::AlreadyOnline(authority_index))
+			return Err(OffchainErr::AlreadyOnline(authority_index));
 		}
 
 		// acquire lock for that authority at current heartbeat to make sure we don't
@@ -801,15 +826,16 @@ impl<T: Config> Pallet<T> {
 				// we will re-send it.
 				match status {
 					// we are still waiting for inclusion.
-					Ok(Some(status)) if status.is_recent(session_index, now) =>
-						Err(OffchainErr::WaitingForInclusion(status.sent_at)),
+					Ok(Some(status)) if status.is_recent(session_index, now) => {
+						Err(OffchainErr::WaitingForInclusion(status.sent_at))
+					},
 					// attempt to set new status
 					_ => Ok(HeartbeatStatus { session_index, sent_at: now }),
 				}
 			},
 		);
 		if let Err(MutateStorageError::ValueFunctionFailed(err)) = res {
-			return Err(err)
+			return Err(err);
 		}
 
 		let mut new_status = res.map_err(|_| OffchainErr::FailedToAcquireLock)?;
@@ -911,7 +937,12 @@ impl<T: Config> OneSessionHandler<T::AccountId> for Pallet<T> {
 			Self::deposit_event(Event::<T>::SomeOffline { offline: offenders.clone() });
 
 			let validator_set_count = keys.len() as u32;
-			let offence = UnresponsivenessOffence { session_index, validator_set_count, offenders };
+			let offence = UnresponsivenessOffence {
+				session_index,
+				validator_set_count,
+				offenders,
+				phantom: PhantomData,
+			};
 			if let Err(e) = T::ReportUnresponsiveness::report_offence(vec![], offence) {
 				sp_runtime::print(e);
 			}
@@ -926,7 +957,7 @@ impl<T: Config> OneSessionHandler<T::AccountId> for Pallet<T> {
 /// An offence that is filed if a validator didn't send a heartbeat message.
 #[derive(RuntimeDebug, TypeInfo)]
 #[cfg_attr(feature = "std", derive(Clone, PartialEq, Eq))]
-pub struct UnresponsivenessOffence<Offender> {
+pub struct UnresponsivenessOffence<Offender, T> {
 	/// The current session index in which we report the unresponsive validators.
 	///
 	/// It acts as a time measure for unresponsiveness reports and effectively will always point
@@ -936,9 +967,12 @@ pub struct UnresponsivenessOffence<Offender> {
 	pub validator_set_count: u32,
 	/// Authorities that were unresponsive during the current era.
 	pub offenders: Vec<Offender>,
+	pub phantom: PhantomData<T>,
 }
 
-impl<Offender: Clone> Offence<Offender> for UnresponsivenessOffence<Offender> {
+impl<Offender: Clone, T: pallet::Config> Offence<Offender>
+	for UnresponsivenessOffence<Offender, T>
+{
 	const ID: Kind = *b"im-online:offlin";
 	type TimeSlot = SessionIndex;
 
@@ -958,15 +992,7 @@ impl<Offender: Clone> Offence<Offender> for UnresponsivenessOffence<Offender> {
 		self.session_index
 	}
 
-	fn slash_fraction(&self, offenders: u32) -> Perbill {
-		// the formula is min((3 * (k - (n / 10 + 1))) / n, 1) * 0.07
-		// basically, 10% can be offline with no slash, but after that, it linearly climbs up to 7%
-		// when 13/30 are offline (around 5% when 1/3 are offline).
-		if let Some(threshold) = offenders.checked_sub(self.validator_set_count / 10 + 1) {
-			let x = Perbill::from_rational(3 * threshold, self.validator_set_count);
-			x.saturating_mul(Perbill::from_percent(7))
-		} else {
-			Perbill::default()
-		}
+	fn slash_fraction(&self, _offenders: u32) -> Perbill {
+		<SlashFraction<T>>::get()
 	}
 }
