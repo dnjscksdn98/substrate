@@ -229,6 +229,10 @@ pub mod pallet {
 	pub type Approvals<T: Config<I>, I: 'static = ()> =
 		StorageValue<_, BoundedVec<ProposalIndex, T::MaxApprovals>, ValueQuery>;
 
+	/// The account of the treasury pot.
+	#[pallet::storage]
+	pub type TreasuryId<T: Config<I>, I: 'static = ()> = StorageValue<_, T::AccountId, OptionQuery>;
+
 	#[pallet::genesis_config]
 	pub struct GenesisConfig;
 
@@ -258,6 +262,7 @@ pub mod pallet {
 		fn build(&self) {
 			// Create Treasury account
 			let account_id = <Pallet<T, I>>::account_id();
+			TreasuryId::<T, I>::put(&account_id);
 			let min = T::Currency::minimum_balance();
 			if T::Currency::free_balance(&account_id) < min {
 				let _ = T::Currency::make_free_balance_be(&account_id, min);
