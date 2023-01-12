@@ -99,7 +99,7 @@ impl Conviction {
 	pub fn lock_periods(self) -> u32 {
 		match self {
 			Conviction::None => 0,
-			Conviction::Locked1x => 1,
+			Conviction::Locked1x => 0,
 			Conviction::Locked2x => 2,
 			Conviction::Locked3x => 4,
 			Conviction::Locked4x => 8,
