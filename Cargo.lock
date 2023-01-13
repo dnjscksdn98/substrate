@@ -8317,7 +8317,7 @@ dependencies = [
  "once_cell",
  "parity-scale-codec",
  "paste",
- "rustix 0.35.13",
+ "rustix 0.36.6",
  "sc-allocator",
  "sc-executor-common",
  "sc-runtime-test",
